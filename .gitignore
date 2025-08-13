@@ -1,0 +1,35 @@
+# Crie um arquivo .gitignore
+echo "# Arquivos Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ambiente virtual
+venv/
+ENV/
+
+# Arquivos específicos do projeto
+data/sample.pdf
+
+# Outros
+.DS_Store
+.env
+.vscode/
+" > .gitignore

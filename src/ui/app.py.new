@@ -1,0 +1,413 @@
+import streamlit as st
+import os
+import random
+import time
+import json
+from src.extractor.pdf_extractor import PDFExtractor
+from src.game.engine import GameEngine
+
+def load_css_and_js():
+    """Carrega estilos CSS personalizados e JavaScript a partir de arquivos externos."""
+    import os
+    
+    # Criar a pasta static se não existir
+    static_dir = os.path.join(os.path.dirname(__file__), 'static')
+    if not os.path.exists(static_dir):
+        os.makedirs(static_dir)
+    
+    # Carregar o CSS
+    css_path = os.path.join(static_dir, 'styles.css')
+    with open(css_path, 'r', encoding='utf-8') as css_file:
+        css_content = css_file.read()
+        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
+    
+    # Carregar o JavaScript
+    js_path = os.path.join(static_dir, 'game_interaction.js')
+    with open(js_path, 'r', encoding='utf-8') as js_file:
+        js_content = js_file.read()
+        st.markdown(f"<script>{js_content}</script>", unsafe_allow_html=True)
+
+def format_text_with_blanks(text, keywords, selected_words=None):
+    """
+    Formata o texto substituindo palavras-chave por espaços em branco ou palavras selecionadas.
+    
+    Args:
+        text: Texto original
+        keywords: Lista de palavras-chave a serem substituídas
+        selected_words: Dicionário com as palavras já selecionadas {index: palavra}
+        
+    Returns:
+        Texto formatado com HTML para mostrar espaços em branco ou palavras selecionadas
+    """
+    if selected_words is None:
+        selected_words = {}
+    
+    # Encontrar o próximo índice de espaço vazio e destacá-lo
+    next_blank_idx = None
+    for i in range(len(keywords)):
+        if i not in selected_words:
+            next_blank_idx = i
+            break
+    
+    # Para debug, mostrar as palavras-chave
+    # st.write(f"Palavras-chave a serem encontradas: {keywords}")
+    # st.write(f"Próximo espaço vazio: {next_blank_idx}, Palavra esperada: {keywords[next_blank_idx] if next_blank_idx is not None else 'Nenhum'}")
+    
+    # Encontrar todas as posições das palavras-chave no texto
+    replacements = []
+    for idx, keyword in enumerate(keywords):
+        # Encontrar todas as ocorrências da palavra no texto
+        start_pos = 0
+        while start_pos < len(text):
+            pos = text.find(keyword, start_pos)
+            if pos == -1:
+                break
+            
+            # Verificar se a palavra não está dentro de outra palavra
+            is_standalone = True
+            
+            # Verificar se há espaço ou pontuação antes
+            if pos > 0 and text[pos-1].isalpha():
+                is_standalone = False
+            
+            # Verificar se há espaço ou pontuação depois
+            end_pos = pos + len(keyword)
+            if end_pos < len(text) and text[end_pos].isalpha():
+                is_standalone = False
+            
+            if is_standalone:
+                if idx in selected_words:
+                    # Se a palavra foi selecionada, mostrar a palavra escolhida
+                    replacement = f'<span class="filled-word">{selected_words[idx]}</span>'
+                else:
+                    # Caso contrário, mostrar espaço em branco com ID único
+                    min_width = max(len(keyword) * 8, 50)  # Estimativa de largura em pixels
+                    
+                    # Adicionar classe 'active' no próximo espaço a ser preenchido
+                    active_class = " active" if idx == next_blank_idx else ""
+                    
+                    # Adicionar texto de ajuda para o espaço ativo
+                    if idx == next_blank_idx:
+                        # Destacar visualmente o espaço ativo como uma área para clicar
+                        replacement = f'<span class="blank-word active" id="blank_{idx}" style="min-width: {min_width}px; color: #e63946; font-weight: bold; cursor: pointer;">Clique aqui</span>'
+                    else:
+                        # Espaços não ativos também são áreas para clicar
+                        replacement = f'<span class="blank-word" id="blank_{idx}" style="min-width: {min_width}px; cursor: pointer;">Clique para preencher</span>'
+                
+                # Guardar a posição e o texto de substituição
+                replacements.append((pos, len(keyword), replacement))
+                break
+            
+            start_pos = pos + 1
+    
+    # Ordenar as substituições da direita para a esquerda para evitar problemas com índices
+    replacements.sort(reverse=True)
+    
+    # Aplicar as substituições
+    result = list(text)
+    for pos, length, replacement in replacements:
+        result[pos:pos+length] = replacement
+    
+    formatted_text = ''.join(result)
+    return formatted_text
+
+def main():
+    # Configurações da página
+    st.set_page_config(layout="wide", page_title="Alego Manus - Jogo de Aprendizado")
+    
+    # Título principal
+    st.markdown('<h1 class="main-title">Jogo Interativo de Legislação</h1>', unsafe_allow_html=True)
+    
+    # Carregar estilos CSS e JavaScript
+    load_css_and_js()
+    
+    # Handler para eventos de colocação de palavras por clique
+    if 'word_placed_event' not in st.session_state:
+        st.session_state.word_placed_event = None
+    
+    # Verificar se há um evento de colocação de palavra
+    word_param = st.query_params.get("word_placed")
+    target_param = st.query_params.get("target_blank")
+    
+    if word_param and target_param:
+        try:
+            word = word_param
+            target_blank = int(target_param)
+            
+            # Atualizar o estado da sessão com a palavra colocada
+            if 'selected_words' in st.session_state:
+                st.session_state.selected_words[target_blank] = word
+                st.session_state.total_questions += 1
+                st.session_state.correct_answer = True
+                
+                # Mostrar toast de confirmação
+                st.toast(f"Palavra '{word}' colocada no texto!", icon="✅")
+                
+                # Limpar os parâmetros de consulta após processamento
+                st.query_params.clear()
+                st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao processar evento de colocação de palavra: {e}")
+    
+    # Inicialização da sessão
+    if 'game_engine' not in st.session_state:
+        # Lista de PDFs disponíveis
+        pdf_options = ["Resolução 1.218", "Outro documento 1", "Outro documento 2"]
+        selected_pdf = st.selectbox("Selecione o documento de legislação:", pdf_options)
+        
+        # Na prática, você precisaria mapear estas seleções para arquivos reais
+        pdf_path = "data/resolucao_1218.pdf"  # Caminho de exemplo
+        
+        if st.button("Iniciar Jogo"):
+            with st.spinner("Carregando documento e inicializando jogo..."):
+                extractor = PDFExtractor(pdf_path)
+                st.session_state.game_engine = GameEngine(extractor)
+                st.session_state.game_engine.initialize_game()
+                st.session_state.selected_keyword_index = None
+                st.session_state.correct_answers = 0
+                st.session_state.total_questions = 0
+                st.session_state.correct_answer = False
+                st.session_state.selected_words = {}  # Armazena palavras selecionadas {index: palavra}
+    else:
+        # Criar a estrutura de abas
+        tab1, tab2, tab3 = st.tabs(["Jogo", "Instruções", "Estatísticas"])
+        
+        with tab1:
+            game_engine = st.session_state.game_engine
+            current_level = game_engine.get_current_level()
+            
+            if current_level:
+                # Mostrar descrição da fase
+                st.markdown(f'<div class="phase-indicator">{game_engine.get_phase_description()}</div>', 
+                            unsafe_allow_html=True)
+                
+                # Mostrar barra de progresso
+                progress = game_engine.get_completion_percentage()
+                st.markdown(f"""
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {progress}%;">{progress:.1f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Container para o artigo
+                with st.container():
+                    st.markdown('<h3 class="article-header">Artigo em Estudo</h3>', unsafe_allow_html=True)
+                    
+                    article_container = st.container()
+                    with article_container:
+                        # Texto do artigo com espaços em branco
+                        if game_engine.current_phase == 1 or game_engine.current_phase == 2:
+                            # Inicializa o dicionário de palavras selecionadas se necessário
+                            if 'selected_words' not in st.session_state:
+                                st.session_state.selected_words = {}
+                            
+                            # Exibir as palavras-chave para depuração (remover em produção)
+                            # st.write(f"Palavras-chave do nível atual: {current_level.keywords}")
+                            
+                            # Fases 1 e 2: Mostrar texto com espaços em branco e botões para seleção
+                            formatted_text = format_text_with_blanks(
+                                current_level.original_text, 
+                                current_level.keywords, 
+                                st.session_state.selected_words
+                            )
+                            st.markdown(f'<div class="article-box">{formatted_text}</div>', unsafe_allow_html=True)
+                            
+                            # Container para as opções de palavras-chave
+                            with st.container():
+                                # Verificar se há algum espaço para preencher
+                                blank_indices = [i for i in range(len(current_level.keywords)) 
+                                              if i not in st.session_state.selected_words]
+                                
+                                if blank_indices:
+                                    st.subheader(f"Como preencher as palavras no texto:")
+                                    st.caption("1) Clique em uma palavra abaixo para selecioná-la. 2) Em seguida, clique em um espaço em branco no texto para colocá-la. As palavras podem ser colocadas em qualquer ordem - o importante é que todas estejam presentes.")
+                                
+                                # Criar uma lista de palavras disponíveis (excluindo as já selecionadas)
+                                available_keywords = current_level.keywords.copy()
+                                selected_values = list(st.session_state.selected_words.values())
+                                for word in selected_values:
+                                    if word in available_keywords:
+                                        available_keywords.remove(word)
+                                
+                                # Se todas as palavras foram selecionadas, verificar se estão corretas
+                                if not available_keywords:
+                                    # Verificar apenas se todas as palavras-chave estão presentes, sem se preocupar com a posição exata
+                                    selected_words_set = set(word.lower() for word in st.session_state.selected_words.values())
+                                    keywords_set = set(word.lower() for word in current_level.keywords)
+                                    
+                                    # Contar quantas palavras estão corretas para estatísticas
+                                    correct_words = len(selected_words_set.intersection(keywords_set))
+                                    st.session_state.correct_answers += correct_words
+                                    
+                                    # Se todas as palavras necessárias estão presentes, considerar como correto
+                                    if selected_words_set == keywords_set:
+                                        st.markdown(f'<div class="feedback-success">Parabéns! Você completou corretamente o artigo!</div>', unsafe_allow_html=True)
+                                        current_level.mark_completed()
+                                    else:
+                                        st.markdown(f'<div class="feedback-error">Algumas palavras não estão no lugar correto. Tente novamente!</div>', unsafe_allow_html=True)
+                                        if st.button("Recomeçar", key="restart_btn"):
+                                            st.session_state.selected_words = {}
+                                            st.rerun()
+                                else:
+                                    # Usar colunas para organizar as palavras arrastáveis
+                                    cols = st.columns(4)  # Ajustado para 4 colunas
+                                    
+                                    # Embaralhar as palavras-chave para não dar dicas pela ordem
+                                    keywords_to_show = available_keywords.copy()
+                                    random.shuffle(keywords_to_show)
+                                    
+                                    # Exibir as palavras-chave disponíveis como elementos claramente clicáveis
+                                    for i, keyword in enumerate(keywords_to_show):
+                                        col_idx = i % 4
+                                        # Renderizar cada palavra como um elemento clicável com HTML e ícone
+                                        cols[col_idx].markdown(
+                                            f'<div class="keyword-clickable filled-word" '
+                                            f'data-word="{keyword}" data-index="{i}" '
+                                            f'style="cursor: pointer; display: flex; align-items: center; justify-content: center;">'
+                                            f'<span style="margin-right: 5px;">👆</span>{keyword}</div>',
+                                            unsafe_allow_html=True
+                                        )
+                                    
+                                    # Botão para limpar seleções
+                                    if st.button("Limpar Seleções", key="clear_btn"):
+                                        st.session_state.selected_words = {}
+                                        st.rerun()
+                        
+                        elif game_engine.current_phase == 3:
+                            # Inicializa o dicionário de palavras selecionadas se necessário
+                            if 'selected_words' not in st.session_state:
+                                st.session_state.selected_words = {}
+                            
+                            # Fase 3: Texto com espaços em branco e campos para digitação
+                            formatted_text = format_text_with_blanks(
+                                current_level.original_text, 
+                                current_level.keywords, 
+                                st.session_state.selected_words
+                            )
+                            st.markdown(f'<div class="article-box">{formatted_text}</div>', unsafe_allow_html=True)
+                            
+                            # Encontrar o próximo índice de espaço vazio
+                            blank_indices = [i for i in range(len(current_level.keywords)) 
+                                          if i not in st.session_state.selected_words]
+                            
+                            if blank_indices:
+                                next_blank = blank_indices[0]
+                                # Destacar qual palavra estamos buscando
+                                st.subheader(f"Digite a palavra para o destaque em vermelho:")
+                                st.caption("Digite a palavra que deve preencher o espaço destacado em vermelho no texto.")
+                                
+                                # Campo para o usuário digitar a palavra
+                                user_input = st.text_input("Digite a palavra-chave:", key=f"input_{next_blank}")
+                                
+                                if st.button("Verificar", key=f"check_{next_blank}"):
+                                    if user_input.strip():
+                                        # Armazenar a palavra digitada
+                                        st.session_state.selected_words[next_blank] = user_input
+                                        
+                                        # Verificar se a palavra está correta
+                                        if user_input.lower() == current_level.keywords[next_blank].lower():
+                                            st.markdown(f'<div class="feedback-success">Correto! \'{user_input}\' é a palavra-chave correta.</div>', unsafe_allow_html=True)
+                                            st.session_state.correct_answers += 1
+                                        else:
+                                            st.markdown(f'<div class="feedback-error">Incorreto. A palavra correta era \'{current_level.keywords[next_blank]}\'.</div>', unsafe_allow_html=True)
+                                        
+                                        st.session_state.total_questions += 1
+                                        
+                                        # Verificar se todas as palavras foram preenchidas
+                                        if len(st.session_state.selected_words) == len(current_level.keywords):
+                                            # Contar quantas palavras estão corretas
+                                            correct_count = sum(1 for idx, word in st.session_state.selected_words.items() 
+                                                            if word.lower() == current_level.keywords[idx].lower())
+                                            
+                                            if correct_count == len(current_level.keywords):
+                                                st.markdown(f'<div class="feedback-success">Parabéns! Você completou corretamente o artigo!</div>', unsafe_allow_html=True)
+                                                current_level.mark_completed()
+                                            else:
+                                                st.markdown(f'<div class="feedback-error">Você completou o artigo com {correct_count} de {len(current_level.keywords)} palavras corretas.</div>', unsafe_allow_html=True)
+                                                if st.button("Tentar Novamente", key="retry_btn"):
+                                                    st.session_state.selected_words = {}
+                                                    st.rerun()
+                                        else:
+                                            # Ainda há palavras para preencher
+                                            st.rerun()
+                            
+                            # Botão para limpar seleções
+                            if st.button("Recomeçar", key="reset_phase3"):
+                                st.session_state.selected_words = {}
+                                st.rerun()
+                
+                # Temporizador para mostrar o progresso quando a resposta estiver correta
+                if st.session_state.get('correct_answer', False):
+                    progress_text = "Próxima palavra em..."
+                    my_bar = st.progress(0)
+                    
+                    for i in range(5):
+                        my_bar.progress((i + 1) * 20)
+                        time.sleep(0.2)
+                    
+                    # Resetar estado
+                    st.session_state.correct_answer = False
+                    st.rerun()
+                
+                # Verificar se todas as palavras-chave foram completadas para mostrar o botão de próximo artigo
+                all_keywords_completed = current_level.is_completed()
+                if all_keywords_completed:
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        if st.button("Próximo Artigo", use_container_width=True, key="next_article"):
+                            # Resetar as palavras selecionadas para o próximo nível
+                            st.session_state.selected_words = {}
+                            has_next = game_engine.advance_level()
+                            if not has_next:
+                                st.session_state.game_completed = True
+                            st.rerun()
+                
+            elif hasattr(st.session_state, 'game_completed'):
+                # Jogo concluído
+                st.success("Parabéns! Você completou todas as fases do jogo!")
+                accuracy = 0
+                if st.session_state.total_questions > 0:
+                    accuracy = (st.session_state.correct_answers / st.session_state.total_questions) * 100
+                    
+                st.write(f"Sua taxa de acerto: {accuracy:.1f}%")
+                st.write(f"Respostas corretas: {st.session_state.correct_answers}")
+                st.write(f"Total de questões: {st.session_state.total_questions}")
+                
+                if st.button("Reiniciar Jogo"):
+                    # Limpar o estado da sessão para reiniciar
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.rerun()
+            else:
+                st.error("Não há mais níveis disponíveis.")
+                if st.button("Reiniciar Jogo"):
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.rerun()
+        
+        with tab2:
+            st.markdown('<h3 class="article-header">Como Jogar</h3>', unsafe_allow_html=True)
+            st.write("""
+            Este jogo ajuda você a aprender as legislações da Alego de forma interativa.
+            
+            1. **Fase 1**: Selecione as palavras-chave corretas no contexto
+            2. **Fase 2**: Menos opções disponíveis para aumentar a dificuldade
+            3. **Fase 3**: Digite as palavras sem dicas
+            """)
+        
+        with tab3:
+            st.markdown('<h3 class="article-header">Seu Progresso</h3>', unsafe_allow_html=True)
+            
+            if 'correct_answers' in st.session_state and 'total_questions' in st.session_state:
+                accuracy = 0
+                if st.session_state.total_questions > 0:
+                    accuracy = (st.session_state.correct_answers / st.session_state.total_questions) * 100
+                
+                st.write(f"Taxa de acerto: {accuracy:.1f}%")
+                st.write(f"Respostas corretas: {st.session_state.correct_answers}")
+                st.write(f"Total de questões: {st.session_state.total_questions}")
+                
+                # Adicionar um gráfico ou visualização do progresso aqui se desejar
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,202 @@
+// Variável global para armazenar a palavra selecionada atualmente
+let selectedWord = null;
+
+function setupClickToPlace() {
+    console.log("Configurando sistema de clique para colocação de palavras");
+    
+    // Seleciona todas as palavras-chave clicáveis
+    const clickables = document.querySelectorAll('.keyword-clickable');
+    console.log(`Encontradas ${clickables.length} palavras clicáveis`);
+    
+    const dropzones = document.querySelectorAll('.blank-word');
+    console.log(`Encontradas ${dropzones.length} áreas para colocação`);
+    
+    // Limpa seleções anteriores
+    if (selectedWord) {
+        const prevSelected = document.querySelector('.selected-word');
+        if (prevSelected) {
+            prevSelected.classList.remove('selected-word');
+        }
+        selectedWord = null;
+    }
+    
+    // Adiciona eventos para cada palavra-chave
+    clickables.forEach(clickable => {
+        // Remove eventos antigos para evitar duplicação
+        clickable.removeEventListener('click', handleWordClick);
+        
+        // Adiciona novo evento de clique
+        clickable.addEventListener('click', handleWordClick);
+        
+        // Garante que o estilo de cursor está aplicado
+        clickable.style.cursor = 'pointer';
+    });
+    
+    // Adiciona eventos para cada zona de clique
+    dropzones.forEach(dropzone => {
+        // Remove eventos antigos
+        dropzone.removeEventListener('click', handleZoneClick);
+        
+        // Adiciona novo evento de clique
+        dropzone.addEventListener('click', handleZoneClick);
+        
+        // Garante que o estilo de cursor está aplicado
+        dropzone.style.cursor = 'pointer';
+    });
+    
+    // Adiciona uma mensagem de instrução para o usuário
+    showInstructionToast("Clique em uma palavra e depois clique em um espaço em branco para colocá-la");
+}
+
+function handleWordClick(e) {
+    console.log("Palavra clicada:", this.getAttribute('data-word'));
+    
+    // Remove seleção anterior
+    const prevSelected = document.querySelector('.selected-word');
+    if (prevSelected) {
+        prevSelected.classList.remove('selected-word');
+    }
+    
+    // Seleciona esta palavra
+    this.classList.add('selected-word');
+    selectedWord = {
+        element: this,
+        word: this.getAttribute('data-word'),
+        index: this.getAttribute('data-index')
+    };
+    
+    // Destaca as zonas de colocação
+    const dropzones = document.querySelectorAll('.blank-word');
+    dropzones.forEach(zone => {
+        zone.classList.add('highlight-dropzone');
+        // Adiciona um efeito visual para destacar ainda mais
+        zone.style.border = '3px dashed #3a86ff';
+        zone.style.backgroundColor = 'rgba(168, 218, 220, 0.4)';
+        zone.style.boxShadow = '0 0 10px rgba(58, 134, 255, 0.8)';
+    });
+    
+    // Mostrar mensagem de instrução
+    showInstructionToast('Agora clique em um espaço em branco para colocar a palavra');
+}
+
+function handleZoneClick(e) {
+    console.log("Zona de colocação clicada");
+    
+    // Verifica se há uma palavra selecionada
+    if (!selectedWord) {
+        showInstructionToast('Primeiro selecione uma palavra para colocar');
+        return;
+    }
+    
+    console.log("Colocando palavra:", selectedWord.word);
+    
+    // Obtém o ID do espaço
+    const blankId = this.id.split('_')[1];
+    
+    // Armazenar a palavra antes de limpar a seleção
+    const wordToPlace = selectedWord.word;
+    
+    // Atualiza visualmente o espaço
+    this.innerHTML = wordToPlace;
+    this.classList.add('filled-word');
+    this.classList.remove('blank-word', 'active', 'highlight-dropzone');
+    
+    // Remove estilos inline que podem ter sido aplicados
+    this.style.border = '';
+    this.style.backgroundColor = '';
+    this.style.boxShadow = '';
+    
+    // Torna o espaço não clicável
+    this.style.cursor = 'default';
+    
+    // Remove a palavra selecionada da lista
+    selectedWord.element.style.display = 'none';
+    
+    // Remove destaque de todas as zonas
+    const dropzones = document.querySelectorAll('.blank-word');
+    dropzones.forEach(zone => {
+        zone.classList.remove('highlight-dropzone');
+        zone.style.border = '';
+        zone.style.backgroundColor = '';
+        zone.style.boxShadow = '';
+    });
+    
+    // Limpa a seleção atual
+    selectedWord = null;
+    
+    // Comunica com o Streamlit
+    try {
+        // Método 1: Parâmetros de URL
+        const newParams = new URLSearchParams(window.location.search);
+        newParams.set('word_placed', wordToPlace);
+        newParams.set('target_blank', blankId);
+        
+        console.log("Enviando palavra para Streamlit:", newParams.toString());
+        
+        // Redirecionar para a mesma página com os novos parâmetros
+        window.location.href = window.location.pathname + '?' + newParams.toString();
+    } catch (e) {
+        console.error("Erro ao enviar dados para Streamlit:", e);
+        showInstructionToast('Erro ao processar palavra. Tente novamente.');
+    }
+}
+
+function showInstructionToast(message) {
+    // Cria ou atualiza um toast de instrução
+    let toast = document.getElementById('instruction-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'instruction-toast';
+        toast.style.position = 'fixed';
+        toast.style.bottom = '30px';
+        toast.style.left = '50%';
+        toast.style.transform = 'translateX(-50%)';
+        toast.style.backgroundColor = '#3a86ff';
+        toast.style.color = 'white';
+        toast.style.padding = '15px 30px';
+        toast.style.borderRadius = '8px';
+        toast.style.zIndex = '1000';
+        toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        toast.style.fontWeight = 'bold';
+        toast.style.fontSize = '16px';
+        toast.style.textAlign = 'center';
+        toast.style.maxWidth = '80%';
+        toast.style.animation = 'fadeIn 0.3s ease-in-out';
+        document.body.appendChild(toast);
+    }
+    
+    toast.textContent = message;
+    
+    // Garantir visibilidade
+    toast.style.opacity = '1';
+    
+    // Mantenha o toast visível por mais tempo
+    clearTimeout(toast.timeout);
+    toast.timeout = setTimeout(() => {
+        if (toast) {
+            toast.style.animation = 'fadeOut 0.3s ease-in-out';
+            setTimeout(() => {
+                if (toast && toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }
+    }, 5000);
+    
+    // Registrar para depuração
+    console.log("Toast exibido:", message);
+}
+
+// Inicializar quando o DOM estiver pronto
+document.addEventListener('DOMContentLoaded', setupClickToPlace);
+
+// Também reinicializar quando a página for atualizada pelo Streamlit
+window.addEventListener('load', setupClickToPlace);
+
+// Reinicializar após cada atualização do Streamlit
+const observer = new MutationObserver(function() {
+    setupClickToPlace();
+});
+document.addEventListener('DOMContentLoaded', function() {
+    observer.observe(document.body, { childList: true, subtree: true });
+});
