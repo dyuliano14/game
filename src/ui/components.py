@@ -1,6 +1,8 @@
 import os, json, hashlib
 from typing import Any, Optional
 import streamlit as st
+import math
+
 from .init_state import ensure_state_initialized, first_unfilled_blank
 
 # ========== util e persistência ==========
@@ -63,18 +65,62 @@ def _generate_missions_for_pdf(pdf_path: str, pdf_name: str) -> list[dict]:
         order += 1
     return missions
 
+def _delete_pdf(fname: str) -> None:
+    """Remove o PDF, o índice e o status salvo correspondente."""
+    try:
+        pdf_path = os.path.join(_upload_dir(), fname)
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+
+        # remover do índice
+        idx = _load_index()
+        if fname in idx:
+            idx.pop(fname, None)
+            _save_index(idx)
+
+        # remover status salvo (se houver)
+        slug = _slugify(fname)
+        status_path = os.path.join(_save_dir(), f"study_status_{slug}.json")
+        if os.path.exists(status_path):
+            os.remove(status_path)
+
+        # se o PDF deletado estava ativo na sessão, limpar missões
+        if st.session_state.get("pdf_path") == pdf_path:
+            st.session_state.missions = []
+            st.session_state.document_title = None
+            st.session_state.current_mission_index = None
+            st.session_state.mission_progress = set()
+            st.session_state.page = "upload"
+
+        st.toast(f"🗑️ Removido: {fname}", icon="✅")
+    except Exception as e:
+        st.error(f"Falha ao excluir {fname}: {e}")
+
 # ========== Upload/Listagem ==========
 def render_pdf_uploader():
     """Tela de upload + listagem de PDFs com ações."""
     ensure_state_initialized()
-    st.header("Importar Lei/Resolução (PDF)")
 
-    uploaded = st.file_uploader("Selecione um PDF", type=["pdf"])
+    # Hero / cabeçalho amigável
+    st.markdown(
+        """
+        <div class="card section">
+          <h2>🧩 Gerador de missões</h2>
+          <p>Continue estudando: vamos jogar e melhorar suas habilidades.<br/>
+          Carregue o PDF do assunto que desejar, clique em <b>Gerar missões</b> e siga para o mapa.</p>
+          <p><b>Vamos lá! 🚀</b></p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Uploader com rótulo solicitado
+    uploaded = st.file_uploader("📥 Import (PDF)", type=["pdf"])
     if uploaded:
         save_path = os.path.join(_upload_dir(), uploaded.name)
         with open(save_path, "wb") as f:
             f.write(uploaded.getbuffer())
-        if st.button("Gerar missões a partir deste PDF"):
+        if st.button("🚀 Gerar missões a partir deste PDF", key="gen_from_uploader"):
             with st.spinner("Gerando missões..."):
                 missions = _generate_missions_for_pdf(save_path, uploaded.name)
                 from .init_state import set_missions_in_state
@@ -86,28 +132,33 @@ def render_pdf_uploader():
                     "missions_count": len(missions),
                 }
                 _save_index(idx)
-            st.success(f"{len(missions)} missões criadas.")
+            st.success(f"{len(missions)} missões criadas. 🗺️")
             st.session_state.page = "map"
             st.rerun()
 
-    st.subheader("PDFs carregados")
+    st.subheader("📚 PDFs carregados")
     files = sorted([f for f in os.listdir(_upload_dir()) if f.lower().endswith(".pdf")])
     idx = _load_index()
 
     if not files:
-        st.info("Nenhum PDF enviado ainda.")
+        st.info("Nenhum PDF enviado ainda. Use o campo acima para importar um arquivo. 🙂")
         return
+
+    # Diálogo simples de confirmação de exclusão (controlado por session_state)
+    to_confirm = st.session_state.get("confirm_delete_name")
 
     for i, fname in enumerate(files):
         pdf_path = os.path.join(_upload_dir(), fname)
         meta = idx.get(fname)
-        cols = st.columns([4, 2, 2, 2])
+
+        cols = st.columns([4, 2, 2, 2, 1])  # + coluna para Excluir
         with cols[0]:
             st.write(f"• {fname}")
             if meta:
                 st.caption(f"Missões: {meta.get('missions_count', 0)}")
+
         with cols[1]:
-            if st.button("Gerar/Atualizar", key=f"gen_{i}"):
+            if st.button("♻️ Gerar/Atualizar", key=f"gen_{i}"):
                 with st.spinner("Gerando missões..."):
                     missions = _generate_missions_for_pdf(pdf_path, fname)
                     from .init_state import set_missions_in_state
@@ -120,18 +171,20 @@ def render_pdf_uploader():
                     _save_index(idx)
                 st.session_state.page = "map"
                 st.rerun()
+
         with cols[2]:
-            if st.button("Abrir mapa", key=f"open_{i}"):
+            if st.button("🗺️ Abrir mapa", key=f"open_{i}"):
                 missions = _generate_missions_for_pdf(pdf_path, fname)
                 from .init_state import set_missions_in_state
                 set_missions_in_state(missions, title=fname, pdf_path=pdf_path)
                 st.session_state.page = "map"
                 st.rerun()
+
         with cols[3]:
             slug = _slugify(fname)
             status_path = os.path.join(_save_dir(), f"study_status_{slug}.json")
             if os.path.exists(status_path):
-                if st.button("Carregar status", key=f"load_{i}"):
+                if st.button("📂 Carregar status", key=f"load_{i}"):
                     try:
                         with open(status_path, "r", encoding="utf-8") as f:
                             payload = json.load(f)
@@ -144,43 +197,136 @@ def render_pdf_uploader():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Falha ao carregar status: {e}")
+            else:
+                st.write("")
+
+        with cols[4]:
+            if st.button("🗑️ Excluir", key=f"del_{i}"):
+                st.session_state.confirm_delete_name = fname
+                st.session_state.confirm_delete_row = i
+                st.rerun()
+
+        # Bloco de confirmação inline
+        if to_confirm == fname:
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                if st.button("✅ Confirmar exclusão", key=f"confirm_del_{i}"):
+                    _delete_pdf(fname)
+                    st.session_state.pop("confirm_delete_name", None)
+                    st.session_state.pop("confirm_delete_row", None)
+                    st.rerun()
+            with c2:
+                if st.button("❌ Cancelar", key=f"cancel_del_{i}"):
+                    st.session_state.pop("confirm_delete_name", None)
+                    st.session_state.pop("confirm_delete_row", None)
+                    st.experimental_rerun()
+
+def _quick_save_status() -> str:
+    """Salva progresso atual em JSON (por documento)."""
+    slug = _slugify(st.session_state.get("document_title") or "doc")
+    path = os.path.join(_save_dir(), f"study_status_{slug}.json")
+    payload = {
+        "mission_progress": sorted(list(st.session_state.get("mission_progress", set()))),
+        "current_mission_index": st.session_state.get("current_mission_index"),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
 
 # ========== Mapa de Missões ==========
-def render_mission_map():
-    """Mapa de missões estilo Duolingo/Mimo."""
+def render_mission_map(show_back_button: bool = False, cols: int = 5):
+    """Mapa de missões com layout em zigue-zague e sequência."""
     ensure_state_initialized()
     missions = st.session_state.get("missions", [])
+
     top = st.columns([1, 1, 6])
     with top[0]:
-        if st.button("Voltar para Upload"):
-            st.session_state.page = "upload"
-            st.rerun()
+        if show_back_button:
+            if st.button("Voltar para Upload", key="btn_back_upload_map"):
+                st.session_state.page = "upload"
+                st.rerun()
     with top[1]:
-        if st.button("Salvar Status"):
-            from .app import save_overall_status
-            path = save_overall_status()
+        if st.button("Salvar Status", key="btn_save_status_map"):
+            path = _quick_save_status()
             st.toast(f"Status salvo: {os.path.basename(path)}", icon="📌")
 
     if not missions:
         st.info("Nenhuma missão. Vá para Upload e gere a partir de um PDF.")
         return
 
+    # Deduplicação leve (evita artigos repetidos no mapa)
+    dedup, seen = [], set()
+    for m in missions:
+        key = (m.get("title"), tuple(m.get("data", {}).get("keywords", [])[:3]))
+        if key not in seen:
+            seen.add(key)
+            dedup.append(m)
+    missions = dedup
+
     st.header(st.session_state.get("document_title") or "Mapa de Missões")
-    cols = st.columns(4)
+
+    # Legenda simples
+    st.markdown(
+        '<div class="mission-legend">'
+        '<span>🎯 Jogável</span><span>🏆 Concluída</span><span>🔒 Bloqueada</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
     completed = st.session_state.get("mission_progress", set())
-    for idx, m in enumerate(missions):
-        with cols[idx % 4]:
+    # Próxima missão desbloqueada é a primeira não concluída
+    next_playable = 0
+    while next_playable in completed and next_playable < len(missions):
+        next_playable += 1
+
+    emojis_cycle = ["🎯", "🧠", "⚡", "🔥", "🛡️", "💎", "🚀"]
+
+    total = len(missions)
+    rows = math.ceil(total / cols)
+
+    # Render em zigue-zague
+    for r in range(rows):
+        start = r * cols
+        end = min(start + cols, total)
+        chunk = list(range(start, end))
+
+        # Alterna direção para zigue-zague
+        left_to_right = (r % 2 == 0)
+        ordered = chunk if left_to_right else list(reversed(chunk))
+
+        cols_row = st.columns(cols, vertical_alignment="center")
+        for i, idx in enumerate(ordered):
+            m = missions[idx]
+            title = m["title"]
+            # rótulo curto
+            short = title if len(title) <= 14 else title[:12] + "…"
+            emoji = emojis_cycle[idx % len(emojis_cycle)]
+
             done = idx in completed
-            label = f"{m['title']}" + (" ✅" if done else "")
-            if st.button(label, key=f"mission_{idx}", type=("secondary" if done else "primary")):
-                st.session_state.current_mission_index = idx
-                st.session_state.selected_words.clear()
-                st.session_state.correct_positions.clear()
-                st.session_state.active_blank_index = 0
-                st.session_state.correct_answers = 0
-                st.session_state.total_questions = 0
-                st.session_state.page = "main"
-                st.rerun()
+            locked = idx > max(next_playable, 0)  # bloqueia tudo após a próxima jogável
+            current = (idx == next_playable and not done)
+
+            label = f"{emoji} {idx+1}. {short}"
+            if done:
+                label += " 🏆"
+            elif locked:
+                label += " 🔒"
+            else:
+                label += " 🎯"
+
+            with cols_row[i]:
+                st.markdown('<div class="mission-slot">', unsafe_allow_html=True)
+                if st.button(label, key=f"mission_{idx}", disabled=locked, use_container_width=True):
+                    st.session_state.current_mission_index = idx
+                    st.session_state.selected_words.clear()
+                    st.session_state.correct_positions.clear()
+                    st.session_state.active_blank_index = 0
+                    st.session_state.correct_answers = 0
+                    st.session_state.total_questions = 0
+                    st.session_state.page = "play"
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+
     st.caption(f"Concluídas: {len(completed)}/{len(missions)}")
 
 # ========== Jogo: preencher lacunas ==========

@@ -1,35 +1,38 @@
 # Crie um arquivo .gitignore
-echo "# Arquivos Python
+echo "# Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Ambiente virtual
+.dist-info/
+.build/
+.eggs/
+.venv/
 venv/
 ENV/
+env/
 
-# Arquivos específicos do projeto
-data/sample.pdf
-
-# Outros
-.DS_Store
-.env
+# IDE/OS
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/logs/
+
+# Dados do app (não versionar uploads e saves locais)
+data/
+!data/.gitkeep
+
+# Cache e testes
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Arquivos temporários
+*.log
+*.tmp
 " > .gitignore

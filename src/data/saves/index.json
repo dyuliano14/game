@@ -1,7 +1,12 @@
 {
   "Resolução nº 1.007.pdf": {
-    "pdf_path": "C:\\Users\\dyuliano.magalhaes\\Documents\\game\\src\\data\\uploads\\Resolução nº 1.007.pdf",
+    "pdf_path": "C:\\Users\\dyuliano.magalhães\\Documents\\game\\src\\data\\uploads\\Resolução nº 1.007.pdf",
     "document_title": "Resolução nº 1.007.pdf",
     "missions_count": 92
+  },
+  "apresentacao_regimento_interno_alego_1218_2007.pdf": {
+    "pdf_path": "C:\\Users\\dyuliano.magalhães\\Documents\\game\\src\\data\\uploads\\apresentacao_regimento_interno_alego_1218_2007.pdf",
+    "document_title": "apresentacao_regimento_interno_alego_1218_2007.pdf",
+    "missions_count": 75
   }
 }

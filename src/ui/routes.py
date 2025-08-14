@@ -6,21 +6,21 @@ def route_manager():
     ensure_state_initialized()
     handle_events()
 
-    # Default de página
+    # Página padrão
     if "page" not in st.session_state:
-        st.session_state.page = "upload"  # começa pelo upload
-    # Se já tem missões mas está em upload, ir para o mapa
-    if st.session_state.page == "upload" and st.session_state.get("missions"):
-        st.session_state.page = "map"
+        st.session_state.page = "upload"
 
-    # Import tardio para evitar ciclos
-    from src.ui.app import render_main_page, render_upload_page, render_map_page
-
-    if st.session_state.page == "main":
-        render_main_page()
-    elif st.session_state.page == "upload":
+    # Import tardio para evitar ciclos e render conforme a página atual
+    page = st.session_state.page
+    if page == "upload":
+        from src.ui.app import render_upload_page
         render_upload_page()
-    elif st.session_state.page == "map":
+    elif page == "map":
+        from src.ui.app import render_map_page
         render_map_page()
+    elif page == "play":  # <- importante: reconhecer play
+        from src.ui.app import render_main_page
+        render_main_page()
     else:
-        render_map_page()
+        from src.ui.app import render_upload_page
+        render_upload_page()
