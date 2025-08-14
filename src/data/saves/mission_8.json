@@ -1,0 +1,20 @@
+{
+  "timestamp": 1755120019.1740174,
+  "document_title": "Resolução nº 1.007.pdf",
+  "current_mission_index": 8,
+  "selected_words": {
+    "0": "Presidência",
+    "1": "direto",
+    "2": "expediente",
+    "3": "administrativo",
+    "4": "forem"
+  },
+  "correct_positions": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "active_blank_index": 4
+}
